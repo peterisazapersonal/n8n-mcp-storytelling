@@ -6,8 +6,7 @@
   "deploy": {
     "startCommand": "n8n start",
     "healthcheckPath": "/",
-    "healthcheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
+    "healthcheckTimeout": 600,
+    "restartPolicyType": "ON_FAILURE"
   }
 }

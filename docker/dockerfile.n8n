@@ -7,27 +7,34 @@ RUN apk add --no-cache \
     ffmpeg \
     python3 \
     py3-pip \
-    curl
+    curl \
+    jq
 
-# Create directories
+# Create necessary directories
 RUN mkdir -p /home/node/.n8n/workflows
+RUN mkdir -p /home/node/.n8n/credentials  
 RUN mkdir -p /app/uploads
 RUN mkdir -p /app/outputs
+RUN mkdir -p /tmp
 
-# Set permissions
+# Set proper permissions
 RUN chown -R node:node /home/node/.n8n
 RUN chown -R node:node /app
+RUN chmod 755 /app/uploads /app/outputs
 
 USER node
 
-# Copy workflows
+# Copy workflow configuration
 COPY n8n-workflows/ /home/node/.n8n/workflows/
 
-# CRITICAL: Use Railway's PORT environment variable
-ENV N8N_PORT=${PORT:-3000}
+# Environment configuration
+ENV N8N_PORT=$PORT
 ENV N8N_HOST=0.0.0.0
+ENV WEBHOOK_URL=https://your-app.railway.app/
+ENV N8N_EDITOR_BASE_URL=https://your-app.railway.app/
+ENV EXECUTIONS_DATA_SAVE_ON_SUCCESS=all
+ENV EXECUTIONS_DATA_SAVE_ON_ERROR=all
 
-# Expose the port that Railway expects
 EXPOSE $PORT
 
 CMD ["n8n", "start"]
