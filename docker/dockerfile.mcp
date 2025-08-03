@@ -1,0 +1,25 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY mcp-server/package*.json ./
+RUN npm ci --only=production
+
+# Copy source code
+COPY mcp-server/dist ./dist
+
+# Create directories for file processing
+RUN mkdir -p /app/uploads /app/outputs
+
+# Set permissions
+RUN chown -R node:node /app
+USER node
+
+# Environment variables
+ENV NODE_ENV=production
+ENV MCP_PORT=3001
+
+EXPOSE 3001
+
+CMD ["node", "dist/index.js"]

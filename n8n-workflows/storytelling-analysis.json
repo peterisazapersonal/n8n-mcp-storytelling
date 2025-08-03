@@ -1,0 +1,425 @@
+{
+  "name": "MCP Storytelling Analysis Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "storytelling-analysis",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "mcp-webhook",
+      "name": "MCP Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse MCP request and prepare for processing\nconst body = JSON.parse($input.first().json.body);\nconst { files, themes, outputOptions } = body;\n\nreturn files.map((file, index) => ({\n  json: {\n    fileIndex: index,\n    filename: file.filename,\n    filepath: file.filepath,\n    themes: themes,\n    outputOptions: outputOptions,\n    totalFiles: files.length,\n    executionId: $execution.id\n  }\n}));"
+      },
+      "id": "parse-mcp-request",
+      "name": "Parse MCP Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "binaryPropertyName": "data",
+        "options": {
+          "language": "={{ $json.outputOptions.language || 'en' }}",
+          "response_format": "verbose_json",
+          "temperature": 0
+        }
+      },
+      "id": "whisper-transcribe",
+      "name": "Whisper Transcription",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "messageType": "fixedCollection",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are an expert storytelling analyst specializing in the Still Motion Muse 4P framework. Analyze interviews to identify:\n\n1. PEOPLE: Key characters, their roles, relationships, and significance\n2. PLACES: Important locations, settings, and their emotional/narrative importance\n3. PURPOSE: Core motivations, goals, transformations, and deeper meanings\n4. PLOT: Story structure, key events, turning points, and narrative arc\n\nFor each analysis, also identify:\n- Powerful soundbites with precise timestamps\n- Emotional impact moments (rate 1-10)\n- Transformation indicators\n- Connection opportunities between different interviews\n\nReturn structured JSON with all elements categorized and timestamped."
+            },
+            {
+              "role": "user",
+              "content": "File: {{ $json.filename }}\nTranscript: {{ $json.transcript }}\nSegments: {{ JSON.stringify($json.segments) }}\n\nKey themes to focus on: {{ $json.themes.map(t => t.name).join(', ') }}\n\nPlease provide comprehensive 4P analysis with soundbites and emotional moments."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "4p-analysis",
+      "name": "4P Framework Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "={{ $json.outputOptions.createSpreadsheet }}",
+            "operation": "equal",
+            "rightValue": true
+          }
+        }
+      },
+      "id": "check-create-spreadsheet",
+      "name": "Should Create Spreadsheet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "{{ $json.spreadsheetId || '' }}",
+        "sheetName": "Story Analysis",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "execution_id": "={{ $json.executionId }}",
+            "filename": "={{ $json.filename }}",
+            "timestamp": "={{ $json.soundbite.startTime }}",
+            "end_time": "={{ $json.soundbite.endTime }}",
+            "text": "={{ $json.soundbite.text }}",
+            "speaker": "={{ $json.soundbite.speaker || 'Unknown' }}",
+            "theme": "={{ $json.soundbite.theme }}",
+            "p_category": "={{ $json.soundbite.pCategory }}",
+            "emotional_impact": "={{ $json.soundbite.emotionalImpact }}",
+            "transformation_indicator": "={{ $json.soundbite.transformationIndicator || false }}"
+          }
+        }
+      },
+      "id": "update-spreadsheet",
+      "name": "Update Google Spreadsheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1340, 120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "={{ $json.outputOptions.createSummary }}",
+            "operation": "equal",
+            "rightValue": true
+          }
+        }
+      },
+      "id": "check-create-summary",
+      "name": "Should Create Summary?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "messageType": "fixedCollection",
+          "messages": [
+            {
+              "role": "system",
+              "content": "Create comprehensive story summaries based on 4P analysis. Generate both individual interview summaries and an overarching narrative that connects all interviews into a cohesive story of transformation."
+            },
+            {
+              "role": "user",
+              "content": "Analysis Data: {{ JSON.stringify($json.analysis) }}\n\nCreate:\n1. Individual story summary for {{ $json.filename }}\n2. Overall narrative connecting all interviews\n3. Key transformation moments\n4. Recommended story sequence\n\nFormat as structured document with clear sections."
+            }
+          ]
+        }
+      },
+      "id": "generate-summary",
+      "name": "Generate Story Summary",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1340, 220]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "folderId": "{{ $json.outputOptions.googleDriveFolderId || '' }}",
+        "name": "Story Summary - {{ $json.filename }} - {{ new Date().toISOString().split('T')[0] }}",
+        "content": "{{ $json.storySummary }}",
+        "mimeType": "application/vnd.google-apps.document"
+      },
+      "id": "create-summary-doc",
+      "name": "Create Google Doc Summary",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1560, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "={{ $json.outputOptions.createVideoClips }}",
+            "operation": "equal",
+            "rightValue": true
+          }
+        }
+      },
+      "id": "check-create-clips",
+      "name": "Should Create Video Clips?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process soundbites for video extraction\nconst analysis = JSON.parse($json.analysis);\nconst soundbites = analysis.soundbites || [];\n\n// Sort by emotional impact and relevance\nconst sortedBites = soundbites\n  .filter(bite => bite.emotionalImpact >= 6) // Only high-impact moments\n  .sort((a, b) => b.emotionalImpact - a.emotionalImpact)\n  .slice(0, 10); // Top 10 soundbites\n\nreturn sortedBites.map((bite, index) => ({\n  json: {\n    ...bite,\n    filename: $json.filename,\n    filepath: $json.filepath,\n    clipIndex: index,\n    outputPath: `/app/outputs/clip_${$json.executionId}_${index}.mp4`,\n    duration: bite.endTime - bite.startTime\n  }\n}));"
+      },
+      "id": "prepare-clips",
+      "name": "Prepare Clip Extraction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 320]
+    },
+    {
+      "parameters": {
+        "command": "ffmpeg -i \"{{ $json.filepath }}\" -ss {{ $json.startTime }} -t {{ $json.duration }} -c:v libx264 -c:a aac -movflags +faststart \"{{ $json.outputPath }}\""
+      },
+      "id": "extract-clips",
+      "name": "Extract Video Clips",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1560, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create final sequence from all clips\nconst clips = $input.all();\nconst executionId = clips[0]?.json?.executionId;\n\n// Sort clips by emotional flow for storytelling\nconst sortedClips = clips.sort((a, b) => {\n  // Sort by plot progression, then emotional impact\n  const plotOrder = { 'plot': 1, 'people': 2, 'purpose': 3, 'places': 4 };\n  const aOrder = plotOrder[a.json.pCategory] || 5;\n  const bOrder = plotOrder[b.json.pCategory] || 5;\n  \n  if (aOrder !== bOrder) return aOrder - bOrder;\n  return b.json.emotionalImpact - a.json.emotionalImpact;\n});\n\nconst concatList = sortedClips\n  .map(clip => `file '${clip.json.outputPath}'`)\n  .join('\\n');\n\nconst concatFilePath = `/tmp/concat_${executionId}.txt`;\nconst finalOutputPath = `/app/outputs/final_story_${executionId}.mp4`;\n\nreturn [{\n  json: {\n    concatList,\n    concatFilePath,\n    finalOutputPath,\n    clipCount: sortedClips.length,\n    executionId\n  }\n}];"
+      },
+      "id": "prepare-final-sequence",
+      "name": "Prepare Final Sequence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 320]
+    },
+    {
+      "parameters": {
+        "command": "echo \"{{ $json.concatList }}\" > {{ $json.concatFilePath }} && ffmpeg -f concat -safe 0 -i {{ $json.concatFilePath }} -c copy \"{{ $json.finalOutputPath }}\""
+      },
+      "id": "create-final-video",
+      "name": "Create Final Story Video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [2000, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all results and create final response\nconst allData = $input.all();\nconst executionId = $execution.id;\n\n// Collect all deliverables\nconst deliverables = {\n  spreadsheetUrl: null,\n  summaryDocUrls: [],\n  videoClipsUrls: [],\n  finalSequenceUrl: null\n};\n\nconst analysis = {\n  people: [],\n  places: [],\n  purpose: [],\n  plot: [],\n  soundbites: [],\n  overallNarrative: ''\n};\n\n// Process each input to extract relevant data\nallData.forEach(item => {\n  const data = item.json;\n  \n  if (data.analysis) {\n    const analysisData = typeof data.analysis === 'string' ? JSON.parse(data.analysis) : data.analysis;\n    \n    analysis.people.push(...(analysisData.people || []));\n    analysis.places.push(...(analysisData.places || []));\n    analysis.purpose.push(...(analysisData.purpose || []));\n    analysis.plot.push(...(analysisData.plot || []));\n    analysis.soundbites.push(...(analysisData.soundbites || []));\n    \n    if (analysisData.overallNarrative) {\n      analysis.overallNarrative += analysisData.overallNarrative + '\\n\\n';\n    }\n  }\n  \n  if (data.spreadsheetUrl) {\n    deliverables.spreadsheetUrl = data.spreadsheetUrl;\n  }\n  \n  if (data.summaryDocUrl) {\n    deliverables.summaryDocUrls.push(data.summaryDocUrl);\n  }\n  \n  if (data.outputPath && data.outputPath.includes('clip_')) {\n    deliverables.videoClipsUrls.push(data.outputPath);\n  }\n  \n  if (data.finalOutputPath) {\n    deliverables.finalSequenceUrl = data.finalOutputPath;\n  }\n});\n\n// Create comprehensive summary\nconst summary = {\n  totalInterviews: analysis.soundbites.length > 0 ? [...new Set(analysis.soundbites.map(s => s.filename || 'unknown'))].length : 0,\n  totalSoundbites: analysis.soundbites.length,\n  keyCharacters: analysis.people.length,\n  importantPlaces: analysis.places.length,\n  transformationMoments: analysis.plot.filter(p => p.significance && p.significance.toLowerCase().includes('transformation')).length,\n  averageEmotionalImpact: analysis.soundbites.length > 0 ? \n    analysis.soundbites.reduce((sum, s) => sum + (s.emotionalImpact || 0), 0) / analysis.soundbites.length : 0\n};\n\nreturn [{\n  json: {\n    executionId,\n    status: 'completed',\n    analysis,\n    deliverables,\n    summary,\n    completedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Final Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}"
+      },
+      "id": "final-response",
+      "name": "Send Final Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2440, 300]
+    }
+  ],
+  "connections": {
+    "MCP Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse MCP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse MCP Request": {
+      "main": [
+        [
+          {
+            "node": "Whisper Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whisper Transcription": {
+      "main": [
+        [
+          {
+            "node": "4P Framework Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4P Framework Analysis": {
+      "main": [
+        [
+          {
+            "node": "Should Create Spreadsheet?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Should Create Summary?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Should Create Video Clips?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Create Spreadsheet?": {
+      "main": [
+        [
+          {
+            "node": "Update Google Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Create Summary?": {
+      "main": [
+        [
+          {
+            "node": "Generate Story Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Story Summary": {
+      "main": [
+        [
+          {
+            "node": "Create Google Doc Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Create Video Clips?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Clip Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Clip Extraction": {
+      "main": [
+        [
+          {
+            "node": "Extract Video Clips",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Video Clips": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Sequence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Sequence": {
+      "main": [
+        [
+          {
+            "node": "Create Final Story Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Google Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Final Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Google Doc Summary": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Final Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Final Story Video": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Final Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Final Results": {
+      "main": [
+        [
+          {
+            "node": "Send Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
