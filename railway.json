@@ -5,17 +5,9 @@
   },
   "deploy": {
     "startCommand": "n8n start",
-    "healthcheckPath": "/healthz",
+    "healthcheckPath": "/",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10
-  },
-  "environments": {
-    "production": {
-      "variables": {
-        "NODE_ENV": "production",
-        "N8N_PORT": "3000"
-      }
-    }
+    "restartPolicyMaxRetries": 3
   }
 }
